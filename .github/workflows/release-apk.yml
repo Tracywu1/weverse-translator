@@ -4,8 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "app/**"
-      - ".github/workflows/release-apk.yml"
+      - "app/build.gradle.kts"
   workflow_dispatch:
 
 permissions:
@@ -26,24 +25,36 @@ jobs:
         with:
           gradle-version: "9.6.0"
 
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$VERSION"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Build APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk WeverseTranslator-v0.5.2.apk
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: cp app/build/outputs/apk/debug/app-debug.apk "WeverseTranslator-v${VERSION}.apk"
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
-          if gh release view v0.5.2 >/dev/null 2>&1; then
-            gh release upload v0.5.2 WeverseTranslator-v0.5.2.apk --clobber
-            gh release edit v0.5.2 \
-              --title "Weverse Translator v0.5.2" \
-              --notes "Android APK for Weverse DM Korean → Simplified Chinese translation. Uses ChatGPT plan authorization, AccessibilityService text extraction, context-aware translation, and local translation caching. No OCR and no screen capture."
+          TAG="v${VERSION}"
+          ASSET="WeverseTranslator-v${VERSION}.apk"
+          NOTES="Android APK for Weverse DM Korean → Simplified Chinese translation. Uses ChatGPT plan authorization, artist-side Korean context, AccessibilityService text extraction, conservative proper-name handling, and local translation caching. No OCR and no screen capture."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+            gh release edit "$TAG" --title "Weverse Translator $TAG" --notes "$NOTES"
           else
-            gh release create v0.5.2 WeverseTranslator-v0.5.2.apk \
+            gh release create "$TAG" "$ASSET" \
               --target "$GITHUB_SHA" \
-              --title "Weverse Translator v0.5.2" \
-              --notes "Android APK for Weverse DM Korean → Simplified Chinese translation. Uses ChatGPT plan authorization, AccessibilityService text extraction, context-aware translation, and local translation caching. No OCR and no screen capture."
+              --title "Weverse Translator $TAG" \
+              --notes "$NOTES"
           fi
