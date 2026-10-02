@@ -10,19 +10,55 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 
-class OverlayController(private val service: AccessibilityService) {
+class OverlayController(
+    private val service: AccessibilityService,
+    private val onTranslationToggle: (Boolean) -> Unit = {}
+) {
     data class BubbleTranslation(
+        val key: String,
+        val sourceText: String,
         val sourceBounds: Rect,
-        val text: String
+        val translatedText: String
     )
 
     private val windowManager = service.getSystemService(WindowManager::class.java)
-    private val bubbleViews = mutableListOf<View>()
+    private val bubbleViews = linkedMapOf<String, TextView>()
+    private val showTranslationForKey = mutableMapOf<String, Boolean>()
     private var statusView: TextView? = null
+    private var quickToggleView: TextView? = null
+    private var translationEnabled = true
 
-    fun renderTranslations(items: List<BubbleTranslation>) {
-        clearBubbleViews()
-        items.takeLast(10).forEach { item -> addInlineTranslation(item) }
+    fun renderTranslations(items: List<BubbleTranslation>, enabled: Boolean = true) {
+        translationEnabled = enabled
+        showQuickToggle(enabled)
+        if (!enabled) {
+            clearBubbleViews()
+            return
+        }
+
+        val visibleItems = items.takeLast(12)
+        val desiredKeys = visibleItems.map { it.key }.toSet()
+
+        bubbleViews.keys.filter { it !in desiredKeys }.toList().forEach { key ->
+            bubbleViews.remove(key)?.let { view -> runCatching { windowManager.removeView(view) } }
+            showTranslationForKey.remove(key)
+        }
+
+        visibleItems.forEach { item ->
+            val view = bubbleViews[item.key] ?: createBubbleView(item).also {
+                bubbleViews[item.key] = it
+                runCatching { windowManager.addView(it, layoutParamsFor(item)) }
+            }
+            refreshBubbleView(view, item)
+            runCatching { windowManager.updateViewLayout(view, layoutParamsFor(item)) }
+        }
+    }
+
+    fun showQuickToggle(enabled: Boolean) {
+        translationEnabled = enabled
+        val view = quickToggleView ?: createQuickToggle().also { quickToggleView = it }
+        view.text = if (enabled) "译" else "原"
+        view.visibility = View.VISIBLE
     }
 
     fun showStatus(text: String) {
@@ -38,93 +74,134 @@ class OverlayController(private val service: AccessibilityService) {
     fun hideAll() {
         clearBubbleViews()
         hideStatus()
+        quickToggleView?.visibility = View.GONE
     }
 
     fun destroy() {
         clearBubbleViews()
         statusView?.let { runCatching { windowManager.removeView(it) } }
+        quickToggleView?.let { runCatching { windowManager.removeView(it) } }
         statusView = null
+        quickToggleView = null
     }
 
-    /**
-     * Paint the Chinese translation directly over the Korean text area instead of adding a
-     * separate white card. This keeps every translation attached to its original DM bubble and
-     * prevents long cards from covering neighbouring messages.
-     */
-    private fun addInlineTranslation(item: BubbleTranslation) {
+    private fun createBubbleView(item: BubbleTranslation): TextView {
         val density = service.resources.displayMetrics.density
-        val screenWidth = service.resources.displayMetrics.widthPixels
-        val screenHeight = service.resources.displayMetrics.heightPixels
+        val horizontalPad = (9 * density).toInt()
+        val verticalPad = (5 * density).toInt()
 
-        val horizontalPad = (10 * density).toInt()
-        val verticalPad = (6 * density).toInt()
-        val margin = (4 * density).toInt()
-        val minWidth = (96 * density).toInt()
-        val maxWidth = (screenWidth * 0.72f).toInt()
-
-        val baseWidth = item.sourceBounds.width() + horizontalPad * 2
-        val width = when {
-            item.text.length >= 34 -> maxOf(baseWidth, (screenWidth * 0.68f).toInt())
-            item.text.length >= 20 -> maxOf(baseWidth, (screenWidth * 0.58f).toInt())
-            item.text.length >= 10 -> maxOf(baseWidth, (screenWidth * 0.42f).toInt())
-            else -> baseWidth
-        }.coerceIn(minWidth, maxWidth)
-
-        val minHeight = (38 * density).toInt()
-        val desiredHeight = (item.sourceBounds.height() + verticalPad * 2).coerceAtLeast(minHeight)
-        val maxHeight = (screenHeight * 0.30f).toInt()
-        val height = desiredHeight.coerceAtMost(maxHeight)
-
-        // Approximate Weverse's artist-message cyan so the translation feels like part of the
-        // existing bubble instead of a floating subtitle card.
         val background = GradientDrawable().apply {
             setColor(Color.argb(252, 188, 239, 243))
             cornerRadius = 15 * density
         }
 
-        val label = TextView(service).apply {
-            text = item.text
+        return TextView(service).apply {
             setTextColor(Color.rgb(28, 30, 32))
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             includeFontPadding = false
-            setLineSpacing(0f, 1.04f)
+            setLineSpacing(0f, 1.02f)
             setPadding(horizontalPad, verticalPad, horizontalPad, verticalPad)
             this.background = background
-            elevation = 1.5f * density
+            elevation = 1.2f * density
             isSingleLine = false
             maxLines = Int.MAX_VALUE
             ellipsize = null
             setHorizontallyScrolling(false)
-            // Chinese is usually shorter than Korean, but this lets unusually long translations
-            // shrink until they fit inside the source bubble area instead of overflowing.
-            setAutoSizeTextTypeUniformWithConfiguration(
-                10,
-                15,
-                1,
-                TypedValue.COMPLEX_UNIT_SP
-            )
+            setAutoSizeTextTypeUniformWithConfiguration(9, 16, 1, TypedValue.COMPLEX_UNIT_SP)
+            isClickable = true
+            setOnClickListener {
+                val current = showTranslationForKey[item.key] ?: true
+                showTranslationForKey[item.key] = !current
+                text = if (!current) item.translatedText else item.sourceText
+            }
+        }.also { refreshBubbleView(it, item) }
+    }
+
+    private fun refreshBubbleView(view: TextView, item: BubbleTranslation) {
+        val showTranslation = showTranslationForKey[item.key] ?: true
+        view.text = if (showTranslation) item.translatedText else item.sourceText
+        view.setOnClickListener {
+            val current = showTranslationForKey[item.key] ?: true
+            showTranslationForKey[item.key] = !current
+            view.text = if (!current) item.translatedText else item.sourceText
         }
+    }
+
+    private fun layoutParamsFor(item: BubbleTranslation): WindowManager.LayoutParams {
+        val density = service.resources.displayMetrics.density
+        val screenWidth = service.resources.displayMetrics.widthPixels
+        val screenHeight = service.resources.displayMetrics.heightPixels
+        val margin = (4 * density).toInt()
+        val horizontalPad = (9 * density).toInt()
+        val verticalPad = (5 * density).toInt()
+        val minWidth = (72 * density).toInt()
+        val maxWidth = (screenWidth * 0.74f).toInt()
+        val minHeight = (34 * density).toInt()
+        val maxHeight = (screenHeight * 0.32f).toInt()
+
+        // Keep the translated bubble close to the original geometry instead of stretching it
+        // across the screen. Long Chinese text is handled by font auto-sizing.
+        val width = (item.sourceBounds.width() + horizontalPad * 2)
+            .coerceIn(minWidth, maxWidth)
+        val height = (item.sourceBounds.height() + verticalPad * 2)
+            .coerceIn(minHeight, maxHeight)
 
         val preferredX = item.sourceBounds.left - horizontalPad
         val preferredY = item.sourceBounds.top - verticalPad
         val x = preferredX.coerceIn(margin, (screenWidth - width - margin).coerceAtLeast(margin))
         val y = preferredY.coerceIn(margin, (screenHeight - height - margin).coerceAtLeast(margin))
 
-        val params = WindowManager.LayoutParams().apply {
+        return WindowManager.LayoutParams().apply {
             this.width = width
             this.height = height
             type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
             format = android.graphics.PixelFormat.TRANSLUCENT
             gravity = Gravity.TOP or Gravity.START
             this.x = x
             this.y = y
         }
+    }
 
-        runCatching { windowManager.addView(label, params) }
-            .onSuccess { bubbleViews += label }
+    private fun createQuickToggle(): TextView {
+        val density = service.resources.displayMetrics.density
+        val background = GradientDrawable().apply {
+            setColor(Color.argb(210, 40, 40, 44))
+            cornerRadius = 18 * density
+        }
+        val view = TextView(service).apply {
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(
+                (10 * density).toInt(),
+                (7 * density).toInt(),
+                (10 * density).toInt(),
+                (7 * density).toInt()
+            )
+            this.background = background
+            elevation = 4 * density
+            isClickable = true
+            setOnClickListener {
+                translationEnabled = !translationEnabled
+                text = if (translationEnabled) "译" else "原"
+                onTranslationToggle(translationEnabled)
+            }
+        }
+        val params = WindowManager.LayoutParams().apply {
+            width = WindowManager.LayoutParams.WRAP_CONTENT
+            height = WindowManager.LayoutParams.WRAP_CONTENT
+            type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            format = android.graphics.PixelFormat.TRANSLUCENT
+            gravity = Gravity.TOP or Gravity.END
+            x = (12 * density).toInt()
+            y = (92 * density).toInt()
+        }
+        runCatching { windowManager.addView(view, params) }
+        return view
     }
 
     private fun createStatusView(): TextView {
@@ -160,7 +237,8 @@ class OverlayController(private val service: AccessibilityService) {
     }
 
     private fun clearBubbleViews() {
-        bubbleViews.forEach { view -> runCatching { windowManager.removeView(view) } }
+        bubbleViews.values.forEach { view -> runCatching { windowManager.removeView(view) } }
         bubbleViews.clear()
+        showTranslationForKey.clear()
     }
 }
