@@ -6,8 +6,10 @@ import org.json.JSONObject
 
 class TranslationCache(context: Context) {
     companion object {
-        // v2 intentionally invalidates translations produced by the older prompt.
-        private const val PREFS = "translation_cache_v2"
+        // v3 invalidates older source-only cache entries. The service now namespaces entries
+        // by artist, and only longer lines are persisted because short DM bubbles are highly
+        // dependent on the next bubble and surrounding wordplay.
+        private const val PREFS = "translation_cache_v3"
         private const val KEY_ENTRIES = "entries"
         private const val MAX_ENTRIES = 240
     }
@@ -37,9 +39,10 @@ class TranslationCache(context: Context) {
         val normalizedSource = source.trim()
         val normalizedTranslation = translation.trim()
 
-        // Short Korean chat lines are highly context-sensitive. Keep them in the in-memory
-        // session cache only; do not reuse them across app/service restarts.
-        if (normalizedSource.length < 8 || normalizedTranslation.isBlank()) return
+        // source includes "artist␟message". Persist only sufficiently long entries so short,
+        // context-sensitive fragments are recomputed in a fresh conversation context.
+        val messagePart = normalizedSource.substringAfter('\u241F', normalizedSource)
+        if (messagePart.length < 14 || normalizedTranslation.isBlank()) return
 
         val current = load()
         current.remove(normalizedSource)
