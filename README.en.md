@@ -10,11 +10,11 @@ An Android utility for real-time Korean → Simplified Chinese translation in We
 
 ## Download
 
-### [⬇ Download WeverseTranslator v0.5.2 APK](https://github.com/Tracywu1/weverse-translator/releases/download/v0.5.2/WeverseTranslator-v0.5.2.apk)
+### [⬇ Download WeverseTranslator v0.5.3 APK](https://github.com/Tracywu1/weverse-translator/releases/download/v0.5.3/WeverseTranslator-v0.5.3.apk)
 
 You can also visit [GitHub Releases](https://github.com/Tracywu1/weverse-translator/releases) for version history.
 
-Current version: **v0.5.2**
+Current version: **v0.5.3**
 
 ## Features
 
@@ -22,10 +22,12 @@ Current version: **v0.5.2**
 - `Continue with ChatGPT` login for eligible ChatGPT Plus / Pro accounts
 - No API key field in the app
 - Prefers a **Sol** model for translation quality and falls back when needed
-- Context-aware translation using recent DM messages
-- Prompt tuned for idol/fan conversations, member names, nicknames, omitted Korean subjects, slang, typos, coined words, cat/dog role-play jokes, `ㅋㅋ`, `ㅎㅎ`, `ㅠㅠ`, emoji and conversational tone
+- Uses only consecutive **artist-side Korean messages** as translation context; the user's Chinese replies are not included
+- More conservative proper-name detection to reduce false person-name interpretations
+- Conservative handling of very short messages, sound effects, coined words and puns; uncertain items are preserved or lightly transliterated instead of being over-interpreted
 - Queues new messages while another translation request is running
-- Persists successful translations locally to reduce repeated requests
+- Persists longer, stable translations locally to reduce repeated requests
+- Very short messages are not persisted across restarts, reducing reuse of stale context-sensitive translations
 - Filters sender names and some non-message Korean UI text
 - Renders Chinese directly over the artist-message region instead of using a bottom subtitle panel
 - Keeps overlays aligned while the conversation scrolls
@@ -59,7 +61,7 @@ Read visible Korean text + screen bounds
       ↓
 Filter sender names / UI text
       ↓
-Queue new messages + recent conversation context
+Queue new messages + recent artist-side Korean context
       ↓
 ChatGPT OAuth + Responses API
       ↓
@@ -78,22 +80,23 @@ co.benx.weverse
 
 ## Translation behavior
 
-The current translation logic is tuned for instant-message conversation rather than formal sentence-by-sentence translation. It aims to:
+The current translation logic is tuned for idol DM conversation rather than formal sentence-by-sentence translation. It aims to:
 
-- understand a batch of consecutive DMs as one conversation before translating individual messages
-- recover omitted Korean subjects and references when context makes them clear
-- prefer natural Chinese over rigid word-for-word output
-- treat likely member names and nicknames as proper nouns
-- preserve cat/dog role-play jokes and fandom-specific wordplay
+- understand consecutive artist-side Korean messages as one context before translating individual messages
+- exclude the user's Chinese replies from translation context
+- recover omitted Korean subjects and references only when the artist-side Korean context supports them
+- prioritize accuracy before stylistic fluency
+- treat possible names conservatively; without clear evidence, prefer normal syntax and lexical meaning
+- avoid forcing an interpretation for uncertain fandom coinages, sound effects, puns or temporary jokes
+- preserve cat/dog role-play jokes, tone and terms of address when the Korean supports them
 - handle typos, spacing mistakes, colloquial contractions and coined words conservatively
-- keep names and terms consistent across adjacent messages
-- preserve `ㅋㅋ`, `ㅎㅎ`, `ㅠㅠ`, emoji, teasing, affectionate tone and terms of address
-- avoid inventing stronger romantic meaning or facts that are absent from the Korean source
+- preserve `ㅋㅋ`, `ㅎㅎ`, `ㅠㅠ`, emoji, teasing and affectionate tone
+- avoid inventing names, relationships, stronger romantic implications or facts absent from the Korean source
 
 ## Privacy
 
 - AccessibilityService listens only to the Weverse package
-- Only Korean text selected for translation and recent context are sent to OpenAI
+- Only artist-side Korean selected for translation and recent artist-side Korean context are sent to OpenAI
 - Translation requests use `store: false`
 - ChatGPT OAuth credentials are stored in the app's private storage
 - Completed translations are cached locally
@@ -108,7 +111,7 @@ Android accessibility permission is powerful. When installing APKs from third pa
 - Message extraction depends on the accessibility text nodes exposed by the current Weverse UI
 - A message with no accessible text will be skipped in this build
 - Very long Chinese output may require a smaller font to fit the source message area
-- Extremely short, context-sensitive messages can still have occasional translation ambiguity
+- Extremely short messages that depend on missing implied dialogue can still remain ambiguous
 - The app is currently optimized only for Korean → Simplified Chinese
 - Development APKs currently use debug signing, so some upgrades may require uninstalling the previous build first
 
@@ -142,9 +145,10 @@ Android accessibility permission is powerful. When installing APKs from third pa
 2. Separate white translation cards
 3. Adaptive long-text cards
 4. v0.4.0: inline overlay aligned to message bubbles
-5. v0.5.0: context-focused translation, persistent cache and interaction improvements
+5. v0.5.0: context-focused translation and persistent cache
 6. v0.5.1: removed OCR and screenshot fallback
-7. v0.5.2: removed in-Weverse source/translation switching for a simpler automatic translation experience
+7. v0.5.2: removed in-Weverse source/translation switching
+8. v0.5.3: artist-only Korean context, more conservative name handling, and invalidated stale translation cache
 
 ## Disclaimer
 
