@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Import remaining v0.4.0 files
         shell: bash
@@ -44,7 +46,8 @@ jobs:
             echo "Source already up to date."
           else
             git commit -m "Complete v0.4.0 standalone source migration"
-            git push
+            git pull --rebase origin main
+            git push origin main
           fi
 
       - uses: actions/setup-java@v5
