@@ -17,6 +17,8 @@ object AppPrefs {
     private const val KEY_SAVED_AT = "saved_at"
     private const val KEY_MODEL = "model"
     private const val KEY_MODEL_NAME = "model_name"
+    private const val KEY_TRANSLATION_ENABLED = "translation_enabled"
+    private const val KEY_OCR_ENABLED = "ocr_enabled"
 
     fun hostId(context: Context): String {
         val prefs = prefs(context)
@@ -38,6 +40,16 @@ object AppPrefs {
     fun savedAt(context: Context) = prefs(context).getLong(KEY_SAVED_AT, 0L)
     fun model(context: Context) = prefs(context).getString(KEY_MODEL, "").orEmpty()
     fun modelName(context: Context) = prefs(context).getString(KEY_MODEL_NAME, "").orEmpty()
+    fun translationEnabled(context: Context) = prefs(context).getBoolean(KEY_TRANSLATION_ENABLED, true)
+    fun ocrEnabled(context: Context) = prefs(context).getBoolean(KEY_OCR_ENABLED, true)
+
+    fun setTranslationEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_TRANSLATION_ENABLED, enabled).apply()
+    }
+
+    fun setOcrEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_OCR_ENABLED, enabled).apply()
+    }
 
     fun hasPlanAccess(context: Context): Boolean =
         clientId(context).isNotBlank() &&
