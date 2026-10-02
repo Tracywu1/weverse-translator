@@ -41,11 +41,8 @@ class WeverseAccessibilityService : AccessibilityService() {
     private val scanRunnable = Runnable { scanAndTranslate() }
     private val visibilityWatchdog = object : Runnable {
         override fun run() {
-            val pkg = rootInActiveWindow?.packageName?.toString()
-            if (pkg != WEVERSE_PACKAGE) {
+            if (rootInActiveWindow?.packageName?.toString() != WEVERSE_PACKAGE) {
                 overlay.hideAll()
-            } else {
-                overlay.showQuickToggle(AppPrefs.translationEnabled(this@WeverseAccessibilityService))
             }
             mainHandler.postDelayed(this, 700)
         }
@@ -55,16 +52,7 @@ class WeverseAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         persistentCache = TranslationCache(this)
         translationCache.putAll(persistentCache.load())
-        overlay = OverlayController(this) { enabled ->
-            AppPrefs.setTranslationEnabled(this, enabled)
-            if (enabled) {
-                mainHandler.removeCallbacks(scanRunnable)
-                mainHandler.post(scanRunnable)
-            } else {
-                overlay.renderTranslations(emptyList(), false)
-                overlay.hideStatus()
-            }
-        }
+        overlay = OverlayController(this)
         mainHandler.post(visibilityWatchdog)
     }
 
@@ -91,10 +79,10 @@ class WeverseAccessibilityService : AccessibilityService() {
             return
         }
 
-        val enabled = AppPrefs.translationEnabled(this)
-        overlay.showQuickToggle(enabled)
-        if (!enabled) {
-            overlay.renderTranslations(emptyList(), false)
+        if (!AppPrefs.translationEnabled(this)) {
+            latestVisible = emptyList()
+            pendingTexts.clear()
+            overlay.renderTranslations(emptyList())
             overlay.hideStatus()
             return
         }
@@ -107,7 +95,7 @@ class WeverseAccessibilityService : AccessibilityService() {
             handleVisible(visible)
         } else {
             latestVisible = emptyList()
-            overlay.renderTranslations(emptyList(), true)
+            overlay.renderTranslations(emptyList())
             if (!requestInFlight) overlay.hideStatus()
         }
     }
@@ -200,12 +188,11 @@ class WeverseAccessibilityService : AccessibilityService() {
             occurrences[message.text] = occurrence
             OverlayController.BubbleTranslation(
                 key = "${message.text}#$occurrence",
-                sourceText = message.text,
                 sourceBounds = Rect(message.bounds),
                 translatedText = translated
             )
         }
-        overlay.renderTranslations(items, AppPrefs.translationEnabled(this))
+        overlay.renderTranslations(items)
     }
 
     private fun collectTexts(node: AccessibilityNodeInfo, out: MutableList<ScreenMessage>) {
