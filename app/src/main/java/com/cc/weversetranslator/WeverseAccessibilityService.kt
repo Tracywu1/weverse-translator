@@ -27,7 +27,6 @@ class WeverseAccessibilityService : AccessibilityService() {
     private val executor = Executors.newSingleThreadExecutor()
     private lateinit var overlay: OverlayController
     private lateinit var persistentCache: TranslationCache
-    private lateinit var ocrFallback: OcrFallback
 
     private val recentContext = ArrayDeque<String>()
     private val translationCache = object : LinkedHashMap<String, String>(256, 0.75f, true) {
@@ -56,7 +55,6 @@ class WeverseAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         persistentCache = TranslationCache(this)
         translationCache.putAll(persistentCache.load())
-        ocrFallback = OcrFallback(this)
         overlay = OverlayController(this) { enabled ->
             AppPrefs.setTranslationEnabled(this, enabled)
             if (enabled) {
@@ -82,7 +80,6 @@ class WeverseAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
         executor.shutdownNow()
-        if (::ocrFallback.isInitialized) ocrFallback.close()
         if (::overlay.isInitialized) overlay.destroy()
         super.onDestroy()
     }
@@ -109,28 +106,9 @@ class WeverseAccessibilityService : AccessibilityService() {
         if (visible.isNotEmpty()) {
             handleVisible(visible)
         } else {
+            latestVisible = emptyList()
             overlay.renderTranslations(emptyList(), true)
-        }
-
-        // Accessibility nodes are usually better than OCR. OCR is only used when the screen
-        // exposes almost no Korean text, which keeps screenshot work rare and avoids duplicates.
-        if (AppPrefs.ocrEnabled(this) && visible.size <= 1) {
-            overlay.showStatus("OCR 识别中…")
-            ocrFallback.requestScan(
-                onResult = { ocrMessages ->
-                    if (rootInActiveWindow?.packageName?.toString() != WEVERSE_PACKAGE) return@requestScan
-                    val combined = (visible + ocrMessages.map { ScreenMessage(it.text, Rect(it.bounds)) })
-                    val ocrVisible = filterMessages(combined)
-                    if (ocrVisible.isNotEmpty()) {
-                        handleVisible(ocrVisible)
-                    } else if (!requestInFlight) {
-                        overlay.hideStatus()
-                    }
-                },
-                onFailure = {
-                    if (!requestInFlight) overlay.hideStatus()
-                }
-            )
+            if (!requestInFlight) overlay.hideStatus()
         }
     }
 
