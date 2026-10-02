@@ -6,7 +6,8 @@ import org.json.JSONObject
 
 class TranslationCache(context: Context) {
     companion object {
-        private const val PREFS = "translation_cache_v1"
+        // v2 intentionally invalidates translations produced by the older prompt.
+        private const val PREFS = "translation_cache_v2"
         private const val KEY_ENTRIES = "entries"
         private const val MAX_ENTRIES = 240
     }
@@ -35,7 +36,10 @@ class TranslationCache(context: Context) {
     fun put(source: String, translation: String) {
         val normalizedSource = source.trim()
         val normalizedTranslation = translation.trim()
-        if (normalizedSource.length < 3 || normalizedTranslation.isBlank()) return
+
+        // Short Korean chat lines are highly context-sensitive. Keep them in the in-memory
+        // session cache only; do not reuse them across app/service restarts.
+        if (normalizedSource.length < 8 || normalizedTranslation.isBlank()) return
 
         val current = load()
         current.remove(normalizedSource)
