@@ -35,6 +35,8 @@ class WeverseAccessibilityService : AccessibilityService() {
     private val pendingTexts = LinkedHashSet<String>()
     private var inFlightTexts: List<String> = emptyList()
     private var latestVisible: List<ScreenMessage> = emptyList()
+    private var currentArtistName = ""
+    private var lastReflowSignature = ""
     private var requestSerial = 0L
     private var requestInFlight = false
 
@@ -59,7 +61,9 @@ class WeverseAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.packageName?.toString() != WEVERSE_PACKAGE) return
         mainHandler.removeCallbacks(scanRunnable)
-        val delay = if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) 70L else 140L
+        // Give consecutive short DM bubbles a small settling window so they can be translated
+        // together instead of forcing each bubble to become an independent sentence.
+        val delay = if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) 70L else 420L
         mainHandler.postDelayed(scanRunnable, delay)
     }
 
@@ -89,8 +93,20 @@ class WeverseAccessibilityService : AccessibilityService() {
 
         val collected = mutableListOf<ScreenMessage>()
         collectTexts(root, collected)
-        val visible = filterMessages(collected)
 
+        val detectedArtist = extractArtistName(collected)
+        if (detectedArtist.isNotBlank() && detectedArtist != currentArtistName) {
+            currentArtistName = detectedArtist
+            recentContext.clear()
+            pendingTexts.clear()
+            inFlightTexts = emptyList()
+            latestVisible = emptyList()
+            lastReflowSignature = ""
+            requestSerial++
+            requestInFlight = false
+        }
+
+        val visible = filterMessages(collected)
         if (visible.isNotEmpty()) {
             handleVisible(visible)
         } else {
@@ -105,8 +121,22 @@ class WeverseAccessibilityService : AccessibilityService() {
         renderCached(visible)
 
         visible.forEach { message ->
-            if (message.text !in translationCache && message.text !in inFlightTexts) {
+            if (cachedTranslation(message.text) == null && message.text !in inFlightTexts) {
                 pendingTexts.add(message.text)
+            }
+        }
+
+        // If a new untranslated message appears at the bottom, retranslate the trailing window
+        // once. This lets a previous bubble be revised when the next bubble completes its sentence.
+        val hasNewTailMessage = visible.takeLast(2).any { message ->
+            cachedTranslation(message.text) == null && message.text !in inFlightTexts
+        }
+        if (hasNewTailMessage) {
+            val tail = visible.takeLast(3)
+            val signature = tail.joinToString("\u241F") { it.text }
+            if (tail.size >= 2 && signature != lastReflowSignature) {
+                tail.forEach { pendingTexts.add(it.text) }
+                lastReflowSignature = signature
             }
         }
 
@@ -126,7 +156,12 @@ class WeverseAccessibilityService : AccessibilityService() {
     private fun startNextBatchIfIdle() {
         if (requestInFlight || pendingTexts.isEmpty()) return
 
-        val batchTexts = pendingTexts.take(8)
+        val visiblePending = latestVisible
+            .map { it.text }
+            .distinct()
+            .filter { it in pendingTexts }
+        val queuedElsewhere = pendingTexts.filter { it !in visiblePending }
+        val batchTexts = (visiblePending + queuedElsewhere).take(8)
         batchTexts.forEach { pendingTexts.remove(it) }
         inFlightTexts = batchTexts
 
@@ -137,8 +172,11 @@ class WeverseAccessibilityService : AccessibilityService() {
         } else {
             emptyList()
         }
-        val contextForRequest = (recentContext.toList() + beforeNew).takeLast(12)
+        val contextForRequest = (recentContext.toList() + beforeNew)
+            .filter { it !in batchSet }
+            .takeLast(12)
 
+        val artistForRequest = currentArtistName
         val serial = ++requestSerial
         requestInFlight = true
         overlay.showStatus("翻译中…")
@@ -147,19 +185,21 @@ class WeverseAccessibilityService : AccessibilityService() {
             val result = runCatching {
                 TranslationClient(this).translateLines(
                     recentContext = contextForRequest,
-                    newMessages = batchTexts
+                    newMessages = batchTexts,
+                    artistName = artistForRequest
                 )
             }
 
             mainHandler.post {
                 requestInFlight = false
                 inFlightTexts = emptyList()
-                if (serial != requestSerial) return@post
+                if (serial != requestSerial || artistForRequest != currentArtistName) return@post
 
                 result.onSuccess { translations ->
                     batchTexts.zip(translations).forEach { (source, translated) ->
-                        translationCache[source] = translated
-                        persistentCache.put(source, translated)
+                        val key = cacheKey(source, artistForRequest)
+                        translationCache[key] = translated
+                        persistentCache.put(key, translated)
                         rememberContext(source)
                     }
                     renderCached(latestVisible)
@@ -183,7 +223,7 @@ class WeverseAccessibilityService : AccessibilityService() {
     private fun renderCached(visible: List<ScreenMessage>) {
         val occurrences = mutableMapOf<String, Int>()
         val items = visible.mapNotNull { message ->
-            val translated = translationCache[message.text] ?: return@mapNotNull null
+            val translated = cachedTranslation(message.text) ?: return@mapNotNull null
             val occurrence = (occurrences[message.text] ?: 0) + 1
             occurrences[message.text] = occurrence
             OverlayController.BubbleTranslation(
@@ -248,6 +288,24 @@ class WeverseAccessibilityService : AccessibilityService() {
         return best
     }
 
+    private fun extractArtistName(raw: List<ScreenMessage>): String {
+        if (raw.isEmpty()) return ""
+        val screenHeight = resources.displayMetrics.heightPixels
+        val screenWidth = resources.displayMetrics.widthPixels
+        val headerCutoff = (screenHeight * 0.13f).toInt()
+        return raw
+            .asSequence()
+            .filter {
+                it.bounds.top < headerCutoff &&
+                    it.bounds.left < (screenWidth * 0.70f).toInt() &&
+                    it.text.length in 1..24
+            }
+            .sortedWith(compareBy<ScreenMessage> { it.bounds.top }.thenBy { it.bounds.left })
+            .map { it.text }
+            .firstOrNull()
+            .orEmpty()
+    }
+
     private fun filterMessages(raw: List<ScreenMessage>): List<ScreenMessage> {
         if (raw.isEmpty()) return emptyList()
 
@@ -281,6 +339,11 @@ class WeverseAccessibilityService : AccessibilityService() {
 
     private fun normalize(value: String): String =
         value.replace(Regex("\\s+"), " ").trim()
+
+    private fun cacheKey(text: String, artistName: String = currentArtistName): String =
+        "${artistName.trim()}\u241F${text.trim()}"
+
+    private fun cachedTranslation(text: String): String? = translationCache[cacheKey(text)]
 
     private fun rememberContext(text: String) {
         recentContext.addLast(text)
