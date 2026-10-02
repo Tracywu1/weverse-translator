@@ -10,6 +10,7 @@ import java.util.ArrayDeque
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 import java.util.concurrent.Executors
+import kotlin.math.abs
 
 class WeverseAccessibilityService : AccessibilityService() {
     companion object {
@@ -25,10 +26,12 @@ class WeverseAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
     private lateinit var overlay: OverlayController
+    private lateinit var persistentCache: TranslationCache
+    private lateinit var ocrFallback: OcrFallback
 
     private val recentContext = ArrayDeque<String>()
-    private val translationCache = object : LinkedHashMap<String, String>(128, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 200
+    private val translationCache = object : LinkedHashMap<String, String>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 300
     }
     private val pendingTexts = LinkedHashSet<String>()
     private var inFlightTexts: List<String> = emptyList()
@@ -40,21 +43,38 @@ class WeverseAccessibilityService : AccessibilityService() {
     private val visibilityWatchdog = object : Runnable {
         override fun run() {
             val pkg = rootInActiveWindow?.packageName?.toString()
-            if (pkg != WEVERSE_PACKAGE) overlay.hideAll()
-            mainHandler.postDelayed(this, 900)
+            if (pkg != WEVERSE_PACKAGE) {
+                overlay.hideAll()
+            } else {
+                overlay.showQuickToggle(AppPrefs.translationEnabled(this@WeverseAccessibilityService))
+            }
+            mainHandler.postDelayed(this, 700)
         }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        overlay = OverlayController(this)
+        persistentCache = TranslationCache(this)
+        translationCache.putAll(persistentCache.load())
+        ocrFallback = OcrFallback(this)
+        overlay = OverlayController(this) { enabled ->
+            AppPrefs.setTranslationEnabled(this, enabled)
+            if (enabled) {
+                mainHandler.removeCallbacks(scanRunnable)
+                mainHandler.post(scanRunnable)
+            } else {
+                overlay.renderTranslations(emptyList(), false)
+                overlay.hideStatus()
+            }
+        }
         mainHandler.post(visibilityWatchdog)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.packageName?.toString() != WEVERSE_PACKAGE) return
         mainHandler.removeCallbacks(scanRunnable)
-        mainHandler.postDelayed(scanRunnable, 180)
+        val delay = if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) 70L else 140L
+        mainHandler.postDelayed(scanRunnable, delay)
     }
 
     override fun onInterrupt() = Unit
@@ -62,6 +82,7 @@ class WeverseAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
         executor.shutdownNow()
+        if (::ocrFallback.isInitialized) ocrFallback.close()
         if (::overlay.isInitialized) overlay.destroy()
         super.onDestroy()
     }
@@ -73,15 +94,50 @@ class WeverseAccessibilityService : AccessibilityService() {
             return
         }
 
+        val enabled = AppPrefs.translationEnabled(this)
+        overlay.showQuickToggle(enabled)
+        if (!enabled) {
+            overlay.renderTranslations(emptyList(), false)
+            overlay.hideStatus()
+            return
+        }
+
         val collected = mutableListOf<ScreenMessage>()
         collectTexts(root, collected)
         val visible = filterMessages(collected)
-        latestVisible = visible
 
+        if (visible.isNotEmpty()) {
+            handleVisible(visible)
+        } else {
+            overlay.renderTranslations(emptyList(), true)
+        }
+
+        // Accessibility nodes are usually better than OCR. OCR is only used when the screen
+        // exposes almost no Korean text, which keeps screenshot work rare and avoids duplicates.
+        if (AppPrefs.ocrEnabled(this) && visible.size <= 1) {
+            overlay.showStatus("OCR 识别中…")
+            ocrFallback.requestScan(
+                onResult = { ocrMessages ->
+                    if (rootInActiveWindow?.packageName?.toString() != WEVERSE_PACKAGE) return@requestScan
+                    val combined = (visible + ocrMessages.map { ScreenMessage(it.text, Rect(it.bounds)) })
+                    val ocrVisible = filterMessages(combined)
+                    if (ocrVisible.isNotEmpty()) {
+                        handleVisible(ocrVisible)
+                    } else if (!requestInFlight) {
+                        overlay.hideStatus()
+                    }
+                },
+                onFailure = {
+                    if (!requestInFlight) overlay.hideStatus()
+                }
+            )
+        }
+    }
+
+    private fun handleVisible(visible: List<ScreenMessage>) {
+        latestVisible = visible
         renderCached(visible)
 
-        // Every untranslated message is queued immediately, even while another request is in flight.
-        // This prevents messages from being lost when the user scrolls or Weverse updates rapidly.
         visible.forEach { message ->
             if (message.text !in translationCache && message.text !in inFlightTexts) {
                 pendingTexts.add(message.text)
@@ -115,9 +171,7 @@ class WeverseAccessibilityService : AccessibilityService() {
         } else {
             emptyList()
         }
-        val contextForRequest = (recentContext.toList() + beforeNew)
-            .distinct()
-            .takeLast(8)
+        val contextForRequest = (recentContext.toList() + beforeNew).takeLast(12)
 
         val serial = ++requestSerial
         requestInFlight = true
@@ -139,6 +193,7 @@ class WeverseAccessibilityService : AccessibilityService() {
                 result.onSuccess { translations ->
                     batchTexts.zip(translations).forEach { (source, translated) ->
                         translationCache[source] = translated
+                        persistentCache.put(source, translated)
                         rememberContext(source)
                     }
                     renderCached(latestVisible)
@@ -149,13 +204,9 @@ class WeverseAccessibilityService : AccessibilityService() {
                         startNextBatchIfIdle()
                     }
 
-                    // Re-scan once after a successful batch. This catches nodes that appeared
-                    // during the network request even when Weverse emitted no further event.
                     mainHandler.removeCallbacks(scanRunnable)
-                    mainHandler.postDelayed(scanRunnable, 120)
+                    mainHandler.postDelayed(scanRunnable, 100)
                 }.onFailure { error ->
-                    // Only successful translations enter the cache. Failed items remain pending
-                    // and can be retried on the next Weverse UI event.
                     batchTexts.forEach { pendingTexts.add(it) }
                     overlay.showStatus("翻译失败：${error.message ?: error.javaClass.simpleName}")
                 }
@@ -164,22 +215,29 @@ class WeverseAccessibilityService : AccessibilityService() {
     }
 
     private fun renderCached(visible: List<ScreenMessage>) {
+        val occurrences = mutableMapOf<String, Int>()
         val items = visible.mapNotNull { message ->
             val translated = translationCache[message.text] ?: return@mapNotNull null
+            val occurrence = (occurrences[message.text] ?: 0) + 1
+            occurrences[message.text] = occurrence
             OverlayController.BubbleTranslation(
+                key = "${message.text}#$occurrence",
+                sourceText = message.text,
                 sourceBounds = Rect(message.bounds),
-                text = translated
+                translatedText = translated
             )
         }
-        overlay.renderTranslations(items)
+        overlay.renderTranslations(items, AppPrefs.translationEnabled(this))
     }
 
     private fun collectTexts(node: AccessibilityNodeInfo, out: MutableList<ScreenMessage>) {
         val text = node.text?.toString()?.let(::normalize).orEmpty()
         if (text.isNotBlank() && HANGUL.containsMatchIn(text)) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            if (!rect.isEmpty) out += ScreenMessage(text, rect)
+            val textRect = Rect()
+            node.getBoundsInScreen(textRect)
+            if (!textRect.isEmpty) {
+                out += ScreenMessage(text, resolveBubbleBounds(node, textRect))
+            }
         }
 
         for (i in 0 until node.childCount) {
@@ -193,23 +251,57 @@ class WeverseAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun resolveBubbleBounds(node: AccessibilityNodeInfo, textRect: Rect): Rect {
+        val density = resources.displayMetrics.density
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+        val maxLeftDelta = (28 * density).toInt()
+        val maxRightDelta = (48 * density).toInt()
+        var best = Rect(textRect)
+        var parent: AccessibilityNodeInfo? = node.parent
+
+        repeat(3) {
+            val current = parent ?: return@repeat
+            val rect = Rect()
+            current.getBoundsInScreen(rect)
+            val next = current.parent
+
+            val looksLikeBubble = !rect.isEmpty &&
+                rect.contains(textRect) &&
+                rect.width() <= (screenWidth * 0.76f).toInt() &&
+                rect.height() <= (screenHeight * 0.30f).toInt() &&
+                abs(rect.left - textRect.left) <= maxLeftDelta &&
+                rect.right - textRect.right <= maxRightDelta
+
+            if (looksLikeBubble && rect.width() >= best.width() && rect.height() >= best.height()) {
+                best = Rect(rect)
+            }
+            current.recycle()
+            parent = next
+        }
+        parent?.recycle()
+        return best
+    }
+
     private fun filterMessages(raw: List<ScreenMessage>): List<ScreenMessage> {
         if (raw.isEmpty()) return emptyList()
 
         val screenHeight = resources.displayMetrics.heightPixels
+        val screenWidth = resources.displayMetrics.widthPixels
         val headerCutoff = (screenHeight * 0.13f).toInt()
 
         val deduped = raw
-            .filter { it.text.isNotBlank() && HANGUL.containsMatchIn(it.text) }
+            .filter {
+                it.text.isNotBlank() &&
+                    HANGUL.containsMatchIn(it.text) &&
+                    it.bounds.left < (screenWidth * 0.82f).toInt()
+            }
             .distinctBy {
                 val r = it.bounds
-                "${it.text}|${r.left / 4}|${r.top / 4}|${r.right / 4}|${r.bottom / 4}"
+                "${it.text}|${r.left / 6}|${r.top / 6}|${r.right / 6}|${r.bottom / 6}"
             }
             .sortedWith(compareBy<ScreenMessage> { it.bounds.top }.thenBy { it.bounds.left })
 
-        // The artist name appears once in the top title and is repeated beside message groups.
-        // Filtering by the actual top title is much safer than filtering all short Korean text,
-        // because real messages such as "얍", "이거까지" and "씻고왔다" are also short.
         val headerNames = deduped
             .filter { it.bounds.top < headerCutoff && it.text.length <= 24 }
             .map { it.text }
@@ -226,8 +318,7 @@ class WeverseAccessibilityService : AccessibilityService() {
         value.replace(Regex("\\s+"), " ").trim()
 
     private fun rememberContext(text: String) {
-        if (recentContext.peekLast() == text) return
         recentContext.addLast(text)
-        while (recentContext.size > 16) recentContext.removeFirst()
+        while (recentContext.size > 20) recentContext.removeFirst()
     }
 }
