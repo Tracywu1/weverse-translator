@@ -6,20 +6,20 @@ An Android accessibility overlay that translates Korean Weverse DM messages into
 
 ## Overview
 
-Weverse DM Translator watches the visible text in the Weverse DM screen through Android's `AccessibilityService`, detects Korean message text, translates it online with ChatGPT, and renders the Chinese translation directly over the corresponding message bubble.
+Weverse DM Translator reads visible Korean text exposed by Weverse through Android's `AccessibilityService`, translates the messages online with ChatGPT, and renders Simplified Chinese directly over the corresponding artist-message bubble.
 
-The goal is to make translation feel closer to a native in-app experience instead of requiring copy/paste, screenshot sharing, or a separate translation app.
+The app intentionally uses a **text-only accessibility path**. It does not capture screenshots and does not use OCR.
 
-Current version: **v0.5.0**
+Current version: **v0.5.1**
 
 ## Features
 
 - Real-time Korean → Simplified Chinese translation for visible Weverse DM messages
 - `Continue with ChatGPT` OAuth flow for eligible ChatGPT Plus / Pro accounts
 - No API key field in the app
-- Plus/Pro model selection now prefers **Sol** for translation quality and falls back when needed
+- Plus/Pro model selection prefers **Sol** for translation quality and falls back when needed
 - Context-aware translation using recent DM messages
-- Prompt tuned for idol/fan messaging, Korean ellipsis, slang, member names, nicknames, animal-role jokes, `ㅋㅋ`, `ㅎㅎ`, `ㅠㅠ`, emoji, and conversational tone
+- Prompt tuned for idol/fan messaging, member names, nicknames, animal-role jokes, slang, omitted Korean subjects, typos, coined words, `ㅋㅋ`, `ㅎㅎ`, `ㅠㅠ`, emoji, and conversational tone
 - Queues untranslated messages while another translation request is running
 - Persistent local translation cache to reduce repeated calls after scrolling or service restarts
 - Filters sender names and non-message Korean UI text
@@ -28,8 +28,7 @@ Current version: **v0.5.0**
 - Smooth overlay position updates while scrolling
 - Tap an individual translated bubble to switch between **original Korean / Chinese translation**
 - Small in-Weverse **译 / 原** quick control for pausing or restoring translated overlays
-- Main screen status indicators for ChatGPT, AccessibilityService, Weverse detection, translation state, and OCR state
-- Optional Korean OCR fallback using on-device ML Kit recognition when Weverse exposes almost no Korean accessibility text
+- Main screen status indicators for ChatGPT, AccessibilityService, Weverse detection, and translation state
 - Translation requests are sent with `store: false`
 
 ## How it works
@@ -39,10 +38,7 @@ Weverse DM screen
       ↓
 Android AccessibilityService
       ↓
-Extract visible Korean text + screen bounds
-      ↓
-If accessibility text is insufficient:
-ML Kit Korean OCR fallback (local recognition only)
+Read visible Korean text + screen bounds
       ↓
 Filter sender names / UI text
       ↓
@@ -59,7 +55,7 @@ Accessibility overlay positioned on the source bubble
 
 ### Why AccessibilityService?
 
-The app needs to know which Korean messages are currently visible and where each message is located on screen. Android accessibility nodes provide both visible text and screen bounds, allowing translations to follow the corresponding DM bubble without continuously taking screenshots.
+The app needs to know which Korean messages are currently visible and where each message is located on screen. Android accessibility nodes provide both visible text and screen bounds, allowing translations to follow the corresponding DM bubble without screenshots.
 
 The service is restricted to the Weverse Android package:
 
@@ -67,17 +63,7 @@ The service is restricted to the Weverse Android package:
 co.benx.weverse
 ```
 
-### OCR fallback
-
-Accessibility text remains the primary source. OCR is used only when the current Weverse screen exposes almost no Korean text through accessibility nodes.
-
-The OCR fallback:
-
-- uses Google's bundled Korean ML Kit recognizer on-device
-- does not perform translation locally
-- only supplies Korean text and bounds to the normal online ChatGPT translation path
-- requires Android 11+ for AccessibilityService screenshot capture
-- can be disabled from the app home screen
+The accessibility service is configured to retrieve window content only. Screenshot capability is not requested.
 
 ## Installation
 
@@ -112,7 +98,7 @@ For account availability, usage limits, and supported plans, refer to OpenAI's c
 
 ## Translation behavior
 
-The v0.5.0 translation prompt is tuned for idol/fan instant messaging rather than formal Korean translation. It aims to:
+The v0.5.x translation prompt is tuned for idol/fan instant messaging rather than formal Korean translation. It aims to:
 
 - understand a batch as one continuous conversation before translating individual lines
 - preserve omitted subjects and pronoun references when context resolves them
@@ -135,7 +121,8 @@ The app is designed around a narrow scope:
 - translation requests use `store: false`
 - OAuth credentials stay in the app's private storage
 - completed translations are cached locally on the device
-- OCR recognition is performed locally with ML Kit and is only triggered as a fallback
+- the app does **not** capture screenshots
+- the app does **not** use OCR
 - the app does not maintain its own cloud database or translation server
 
 Because Android accessibility permission is powerful, review the source code before enabling the service if you are using a build from an untrusted source.
@@ -151,7 +138,6 @@ Because Android accessibility permission is powerful, review the source code bef
 │       ├── java/com/cc/weversetranslator/
 │       │   ├── AppPrefs.kt
 │       │   ├── MainActivity.kt
-│       │   ├── OcrFallback.kt
 │       │   ├── OpenAiAuth.kt
 │       │   ├── OverlayController.kt
 │       │   ├── TranslationCache.kt
@@ -168,14 +154,13 @@ Because Android accessibility permission is powerful, review the source code bef
 
 | Component | Responsibility |
 | --- | --- |
-| `WeverseAccessibilityService` | Reads visible Weverse text nodes, manages OCR fallback, filtering, context, queueing and cache use |
+| `WeverseAccessibilityService` | Reads visible Weverse text nodes, filters messages, maintains context, queueing and cache use |
 | `TranslationClient` | Selects an available model and calls the Responses API with DM-specific translation instructions |
 | `OpenAiAuth` | ChatGPT OAuth, PKCE and token refresh |
 | `OverlayController` | Keeps translated bubbles aligned, provides per-message source/translation switching and the quick toggle |
 | `TranslationCache` | Persists successful translations locally |
-| `OcrFallback` | Uses Korean ML Kit OCR when accessibility text is insufficient |
 | `AppPrefs` | Local model/auth/feature preferences |
-| `MainActivity` | Authorization, health/status indicators, feature toggles, testing and Weverse launch controls |
+| `MainActivity` | Authorization, health/status indicators, translation controls, testing and Weverse launch controls |
 
 ## Building
 
@@ -202,8 +187,8 @@ A GitHub Actions workflow is also included and builds the debug APK on pushes to
 
 ## Current limitations
 
-- UI-node extraction still depends on Weverse's current accessibility hierarchy.
-- OCR fallback is intentionally conservative and activates mainly when accessibility extraction returns almost no Korean text.
+- Message extraction depends on Weverse exposing its current DM text through Android accessibility nodes.
+- If Weverse renders a message without accessible text, this build deliberately leaves it untranslated rather than taking a screenshot.
 - Very long Chinese translations can require a smaller font to stay inside the source bubble geometry.
 - Tapping a translated overlay switches that message to the original source, so the overlay temporarily receives touch input in the bubble area.
 - Reusing a persistent translation for the exact same Korean text can occasionally be less context-sensitive for very ambiguous short phrases; very short items are therefore excluded from persistent storage.
@@ -212,14 +197,14 @@ A GitHub Actions workflow is also included and builds the debug APK on pushes to
 
 ## Roadmap
 
-Implemented in v0.5.0:
+Implemented:
 
 - [x] Translation on/off quick toggle
 - [x] Better status indicators for ChatGPT login, AccessibilityService, and Weverse detection
 - [x] More robust bubble geometry and scrolling synchronization
 - [x] Optional original/translation toggle per message
 - [x] Persistent local translation cache
-- [x] OCR fallback for message content that is unavailable through accessibility nodes
+- [x] Context-focused Korean DM translation with proper-name and fandom-language handling
 
 Still planned:
 
@@ -234,7 +219,8 @@ The project has gone through several UI and extraction approaches:
 2. per-message white translation cards
 3. full-height adaptive cards
 4. **v0.4.0 inline bubble overlay**
-5. **v0.5.0 context-focused translation + persistent cache + OCR fallback + interactive overlays**
+5. **v0.5.0 context-focused translation + persistent cache + interactive overlays**
+6. **v0.5.1 text-only accessibility build; OCR and screenshot fallback removed**
 
 ## Notes for contributors
 
@@ -245,7 +231,7 @@ Keep privacy and scope narrow when adding features. In particular:
 - do not hardcode credentials
 - keep network requests explicit and minimal
 - prefer message-level caching over repeated translation calls
-- keep OCR as a fallback rather than the default extraction path
+- do not add screen capture or OCR without an explicit product decision
 
 ## Disclaimer
 
