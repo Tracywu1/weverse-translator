@@ -15,7 +15,6 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var loginButton: Button
     private lateinit var translationToggleButton: Button
-    private lateinit var ocrToggleButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,15 +23,10 @@ class MainActivity : Activity() {
         status = findViewById(R.id.textStatus)
         loginButton = findViewById(R.id.buttonLogin)
         translationToggleButton = findViewById(R.id.buttonToggleTranslation)
-        ocrToggleButton = findViewById(R.id.buttonToggleOcr)
 
         loginButton.setOnClickListener { startChatGptLogin() }
         translationToggleButton.setOnClickListener {
             AppPrefs.setTranslationEnabled(this, !AppPrefs.translationEnabled(this))
-            refreshUi()
-        }
-        ocrToggleButton.setOnClickListener {
-            AppPrefs.setOcrEnabled(this, !AppPrefs.ocrEnabled(this))
             refreshUi()
         }
 
@@ -114,11 +108,9 @@ class MainActivity : Activity() {
         val accessibilityEnabled = isAccessibilityEnabled()
         val weverseInstalled = isWeverseInstalled()
         val translationEnabled = AppPrefs.translationEnabled(this)
-        val ocrEnabled = AppPrefs.ocrEnabled(this)
 
         loginButton.text = if (connected) "重新授权 ChatGPT" else "Continue with ChatGPT"
         translationToggleButton.text = if (translationEnabled) "实时翻译：已开启" else "实时翻译：已暂停"
-        ocrToggleButton.text = if (ocrEnabled) "OCR 兜底：已开启" else "OCR 兜底：已关闭"
 
         if (keepMessage) return
 
@@ -131,7 +123,6 @@ class MainActivity : Activity() {
             append("\n无障碍服务：").append(if (accessibilityEnabled) "✓ 已开启" else "○ 待开启")
             append("\nWeverse：").append(if (weverseInstalled) "✓ 已检测" else "○ 未检测")
             append("\n实时翻译：").append(if (translationEnabled) "✓ 开启" else "暂停")
-            append("\nOCR 兜底：").append(if (ocrEnabled) "✓ 开启" else "关闭")
         }
     }
 
