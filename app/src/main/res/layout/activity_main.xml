@@ -44,12 +44,6 @@
             android:text="实时翻译：已开启" />
 
         <Button
-            android:id="@+id/buttonToggleOcr"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="OCR 兜底：已开启" />
-
-        <Button
             android:id="@+id/buttonAccessibility"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -88,7 +82,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            android:text="隐私说明：无障碍服务仅监听 Weverse 包名。翻译时，当前可见韩文和最近上下文会发送到 OpenAI。OCR 仅在无障碍节点几乎读取不到韩文时触发，并在本机使用 ML Kit 识别。ChatGPT OAuth 凭据保存在本应用私有存储中。"
+            android:text="隐私说明：无障碍服务仅监听 Weverse 包名。翻译时，当前可见韩文和最近上下文会发送到 OpenAI。应用不截屏，也不进行 OCR。ChatGPT OAuth 凭据保存在本应用私有存储中。"
             android:textSize="13sp" />
 
     </LinearLayout>
