@@ -10,55 +10,33 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 
-class OverlayController(
-    private val service: AccessibilityService,
-    private val onTranslationToggle: (Boolean) -> Unit = {}
-) {
+class OverlayController(private val service: AccessibilityService) {
     data class BubbleTranslation(
         val key: String,
-        val sourceText: String,
         val sourceBounds: Rect,
         val translatedText: String
     )
 
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val bubbleViews = linkedMapOf<String, TextView>()
-    private val showTranslationForKey = mutableMapOf<String, Boolean>()
     private var statusView: TextView? = null
-    private var quickToggleView: TextView? = null
-    private var translationEnabled = true
 
-    fun renderTranslations(items: List<BubbleTranslation>, enabled: Boolean = true) {
-        translationEnabled = enabled
-        showQuickToggle(enabled)
-        if (!enabled) {
-            clearBubbleViews()
-            return
-        }
-
+    fun renderTranslations(items: List<BubbleTranslation>) {
         val visibleItems = items.takeLast(12)
         val desiredKeys = visibleItems.map { it.key }.toSet()
 
         bubbleViews.keys.filter { it !in desiredKeys }.toList().forEach { key ->
             bubbleViews.remove(key)?.let { view -> runCatching { windowManager.removeView(view) } }
-            showTranslationForKey.remove(key)
         }
 
         visibleItems.forEach { item ->
-            val view = bubbleViews[item.key] ?: createBubbleView(item).also {
+            val view = bubbleViews[item.key] ?: createBubbleView().also {
                 bubbleViews[item.key] = it
                 runCatching { windowManager.addView(it, layoutParamsFor(item)) }
             }
-            refreshBubbleView(view, item)
+            view.text = item.translatedText
             runCatching { windowManager.updateViewLayout(view, layoutParamsFor(item)) }
         }
-    }
-
-    fun showQuickToggle(enabled: Boolean) {
-        translationEnabled = enabled
-        val view = quickToggleView ?: createQuickToggle().also { quickToggleView = it }
-        view.text = if (enabled) "译" else "原"
-        view.visibility = View.VISIBLE
     }
 
     fun showStatus(text: String) {
@@ -74,22 +52,18 @@ class OverlayController(
     fun hideAll() {
         clearBubbleViews()
         hideStatus()
-        quickToggleView?.visibility = View.GONE
     }
 
     fun destroy() {
         clearBubbleViews()
         statusView?.let { runCatching { windowManager.removeView(it) } }
-        quickToggleView?.let { runCatching { windowManager.removeView(it) } }
         statusView = null
-        quickToggleView = null
     }
 
-    private fun createBubbleView(item: BubbleTranslation): TextView {
+    private fun createBubbleView(): TextView {
         val density = service.resources.displayMetrics.density
         val horizontalPad = (9 * density).toInt()
         val verticalPad = (5 * density).toInt()
-
         val background = GradientDrawable().apply {
             setColor(Color.argb(252, 188, 239, 243))
             cornerRadius = 15 * density
@@ -108,22 +82,6 @@ class OverlayController(
             ellipsize = null
             setHorizontallyScrolling(false)
             setAutoSizeTextTypeUniformWithConfiguration(9, 16, 1, TypedValue.COMPLEX_UNIT_SP)
-            isClickable = true
-            setOnClickListener {
-                val current = showTranslationForKey[item.key] ?: true
-                showTranslationForKey[item.key] = !current
-                text = if (!current) item.translatedText else item.sourceText
-            }
-        }.also { refreshBubbleView(it, item) }
-    }
-
-    private fun refreshBubbleView(view: TextView, item: BubbleTranslation) {
-        val showTranslation = showTranslationForKey[item.key] ?: true
-        view.text = if (showTranslation) item.translatedText else item.sourceText
-        view.setOnClickListener {
-            val current = showTranslationForKey[item.key] ?: true
-            showTranslationForKey[item.key] = !current
-            view.text = if (!current) item.translatedText else item.sourceText
         }
     }
 
@@ -139,8 +97,6 @@ class OverlayController(
         val minHeight = (34 * density).toInt()
         val maxHeight = (screenHeight * 0.32f).toInt()
 
-        // Keep the translated bubble close to the original geometry instead of stretching it
-        // across the screen. Long Chinese text is handled by font auto-sizing.
         val width = (item.sourceBounds.width() + horizontalPad * 2)
             .coerceIn(minWidth, maxWidth)
         val height = (item.sourceBounds.height() + verticalPad * 2)
@@ -156,52 +112,13 @@ class OverlayController(
             this.height = height
             type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
             format = android.graphics.PixelFormat.TRANSLUCENT
             gravity = Gravity.TOP or Gravity.START
             this.x = x
             this.y = y
         }
-    }
-
-    private fun createQuickToggle(): TextView {
-        val density = service.resources.displayMetrics.density
-        val background = GradientDrawable().apply {
-            setColor(Color.argb(210, 40, 40, 44))
-            cornerRadius = 18 * density
-        }
-        val view = TextView(service).apply {
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setPadding(
-                (10 * density).toInt(),
-                (7 * density).toInt(),
-                (10 * density).toInt(),
-                (7 * density).toInt()
-            )
-            this.background = background
-            elevation = 4 * density
-            isClickable = true
-            setOnClickListener {
-                translationEnabled = !translationEnabled
-                text = if (translationEnabled) "译" else "原"
-                onTranslationToggle(translationEnabled)
-            }
-        }
-        val params = WindowManager.LayoutParams().apply {
-            width = WindowManager.LayoutParams.WRAP_CONTENT
-            height = WindowManager.LayoutParams.WRAP_CONTENT
-            type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-            format = android.graphics.PixelFormat.TRANSLUCENT
-            gravity = Gravity.TOP or Gravity.END
-            x = (12 * density).toInt()
-            y = (92 * density).toInt()
-        }
-        runCatching { windowManager.addView(view, params) }
-        return view
     }
 
     private fun createStatusView(): TextView {
@@ -239,6 +156,5 @@ class OverlayController(
     private fun clearBubbleViews() {
         bubbleViews.values.forEach { view -> runCatching { windowManager.removeView(view) } }
         bubbleViews.clear()
-        showTranslationForKey.clear()
     }
 }
