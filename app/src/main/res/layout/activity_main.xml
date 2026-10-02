@@ -75,7 +75,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="使用提示：进入 Weverse 后，右上方会出现一个小型「译 / 原」快捷按钮；点任意翻译气泡也可以单独在原文和译文之间切换。"
+            android:text="使用提示：需要查看韩文原文时，可在本应用首页暂停实时翻译；重新开启后继续自动翻译。"
             android:textSize="13sp" />
 
         <TextView
