@@ -38,6 +38,18 @@
             android:text="测试套餐翻译" />
 
         <Button
+            android:id="@+id/buttonToggleTranslation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="实时翻译：已开启" />
+
+        <Button
+            android:id="@+id/buttonToggleOcr"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="OCR 兜底：已开启" />
+
+        <Button
             android:id="@+id/buttonAccessibility"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -61,7 +73,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:padding="12dp"
-            android:text="状态：等待 ChatGPT 登录"
+            android:text="ChatGPT：○ 待登录"
             android:textIsSelectable="true"
             android:textSize="14sp" />
 
@@ -69,7 +81,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="隐私说明：无障碍服务仅监听 Weverse 包名。翻译时，当前可见韩文和最近上下文会发送到 OpenAI。ChatGPT OAuth 凭据保存在本应用私有存储中。"
+            android:text="使用提示：进入 Weverse 后，右上方会出现一个小型「译 / 原」快捷按钮；点任意翻译气泡也可以单独在原文和译文之间切换。"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="隐私说明：无障碍服务仅监听 Weverse 包名。翻译时，当前可见韩文和最近上下文会发送到 OpenAI。OCR 仅在无障碍节点几乎读取不到韩文时触发，并在本机使用 ML Kit 识别。ChatGPT OAuth 凭据保存在本应用私有存储中。"
             android:textSize="13sp" />
 
     </LinearLayout>
