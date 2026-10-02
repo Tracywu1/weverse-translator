@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Weverse Translator</string>
-    <string name="accessibility_desc">仅读取 Weverse 当前可见文本并显示中文翻译；开启 OCR 兜底后，仅在无障碍文本不足时对当前 Weverse 屏幕做本机文字识别。</string>
+    <string name="accessibility_desc">仅读取 Weverse 当前可见文本并显示中文翻译；应用不截屏，也不进行 OCR。</string>
 </resources>
