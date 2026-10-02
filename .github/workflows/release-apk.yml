@@ -1,0 +1,49 @@
+name: Publish APK Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/release-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.0"
+
+      - name: Build APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Prepare release asset
+        run: cp app/build/outputs/apk/debug/app-debug.apk WeverseTranslator-v0.5.2.apk
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.5.2 >/dev/null 2>&1; then
+            gh release upload v0.5.2 WeverseTranslator-v0.5.2.apk --clobber
+            gh release edit v0.5.2 \
+              --title "Weverse Translator v0.5.2" \
+              --notes "Android APK for Weverse DM Korean → Simplified Chinese translation. Uses ChatGPT plan authorization, AccessibilityService text extraction, context-aware translation, and local translation caching. No OCR and no screen capture."
+          else
+            gh release create v0.5.2 WeverseTranslator-v0.5.2.apk \
+              --target "$GITHUB_SHA" \
+              --title "Weverse Translator v0.5.2" \
+              --notes "Android APK for Weverse DM Korean → Simplified Chinese translation. Uses ChatGPT plan authorization, AccessibilityService text extraction, context-aware translation, and local translation caching. No OCR and no screen capture."
+          fi
