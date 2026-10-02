@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Weverse Translator</string>
+    <string name="accessibility_desc">仅读取 Weverse 当前可见文本，将韩文消息翻译为中文并显示在覆盖层中。</string>
+</resources>
