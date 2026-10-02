@@ -59,7 +59,8 @@ class TranslationClient(private val context: Context) {
             }
             if (candidates.isEmpty()) error("ChatGPT 套餐当前未返回可用模型")
 
-            val preferred = listOf("gpt-5.6-luna", "gpt-6.1-luna", "gpt-5.6-sol", "gpt-6.1-sol")
+            // Plus/Pro优先质量更高的 Sol；不可用时再回退到 Luna。
+            val preferred = listOf("gpt-5.6-sol", "gpt-6.1-sol", "gpt-5.6-luna", "gpt-6.1-luna")
             val selected = preferred.firstNotNullOfOrNull { p -> candidates.firstOrNull { it.first == p } }
                 ?: candidates.first()
             AppPrefs.saveModel(context, selected.first, selected.second)
@@ -76,22 +77,35 @@ class TranslationClient(private val context: Context) {
         newMessages: List<String>
     ): String {
         val instructions = """
-            你是韩语到简体中文的聊天翻译器，场景是艺人与粉丝的即时私信。
-            结合上下文处理省略主语、口语、ㅋㅋ、ㅎㅎ、ㅠㅠ、昵称、网络用语和连续短句。
-            中文要像中国年轻人在微信里自然聊天，避免书面翻译腔。
-            忠实保留原文的亲密程度、撒娇感、语气词、称呼、emoji 和颜文字，不自行增加暧昧含义。
-            遇到歧义时采用最符合上下文的解释。
-            必须严格输出 JSON 字符串数组，数组长度必须与待翻译消息数量完全一致。
-            每个数组元素只放对应消息的中文翻译，不加编号、标题、解释或 Markdown。
+            你是专门翻译韩语偶像私信的简体中文译者。目标是“准确理解上下文后，用中国年轻人真实聊天时会说的话表达”，而不是逐字翻译。
+
+            翻译原则：
+            1. 先把最近上下文和本批消息当作一段连续对话理解，再逐条输出对应译文。必须保留消息之间的承接关系、省略主语、指代和语气。
+            2. 优先自然口语。避免“名女子呀”“做点各种各样的事情”“给予温暖的话语”这类生硬直译。
+            3. 人名、成员名、昵称和粉圈专名绝对不要按普通词义乱翻。像“이한”这类疑似人名，要按人名理解；不确定官方中文名时可保留韩文或采用稳妥音译，不能臆造无关名词。
+            4. 对“강아지 / 고양이 / 냥이”等角色梗、动物设定和撒娇称呼，要结合上下文翻成“小狗、猫猫、XX猫猫”等自然表达；“시키다”在这种语境常表示“让某人当/扮演某个角色”。
+            5. 对韩语口语、省略、连写、错别字、造词和网络梗，先推断最可能的真实意图。若仍有歧义，选最贴合当前对话的一种，不要随意扩写。
+            6. 对“어울리다”一类词要按语境处理成“合适/适合/搭”，不要机械翻译；对“떠나서”常按“先不说/抛开……不谈”理解。
+            7. 保留原文亲密程度、撒娇感、ㅋㅋ、ㅎㅎ、ㅠㅠ、emoji、颜文字和称呼。中文可以自然转成“哈哈/嘿嘿/呜呜”等，但不要自行增加更强的暧昧或恋爱意味。
+            8. 短句尽量短，长句保持原意完整。不要为了“好听”改写成新的信息。
+            9. 连续几条明显在讲同一件事时，译文风格和名词必须前后一致。
+
+            输出要求：
+            - 必须严格输出 JSON 字符串数组。
+            - 数组长度必须与待翻译消息数量完全一致。
+            - 每个数组元素只放对应消息的最终中文译文。
+            - 不加编号、标题、解释、括号点评或 Markdown。
         """.trimIndent()
 
         val userText = buildString {
             if (recentContext.isNotEmpty()) {
-                append("最近上下文：\n")
-                recentContext.forEach { append("- ").append(it).append('\n') }
+                append("最近上下文（按时间顺序）：\n")
+                recentContext.forEachIndexed { index, value ->
+                    append("C").append(index + 1).append(". ").append(value).append('\n')
+                }
                 append('\n')
             }
-            append("待翻译消息：\n")
+            append("待翻译消息（按时间顺序）：\n")
             newMessages.forEachIndexed { index, value ->
                 append(index + 1).append(". ").append(value).append('\n')
             }
